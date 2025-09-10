@@ -1,235 +1,178 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import random
 
-# ---------- Helper functions ----------
-def empty_timetable():
-    hours = ["07:30 - 08:30", "08:30 - 09:30", "09:30 - 10:30",
-             "10:30 - 11:30", "11:30 - 12:30", "12:30 - 13:30",
-             "13:30 - 14:30", "14:30 - 15:30", "15:30 - 16:30"]
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-    data = [["" for _ in days] for _ in hours]
-    return pd.DataFrame(data, index=hours, columns=days)
+# ----- DATA STORAGE -----
+# For simplicity, use session state to store data temporarily
 
-COLORS = ['#fed330', '#26de81', '#fd9644', '#a55eea', '#eb3b5a']
-def color_picker(course):
-    if not course: return "background-color: #fff; color: #212121;"
-    idx = abs(hash(course)) % len(COLORS)
-    return f"background-color: {COLORS[idx]}; color: #212121;"
-
-def show_timetable(timetable, course_color_mode=True):
-    if course_color_mode:
-        styled = timetable.style.applymap(lambda v: color_picker(v))
-    else:
-        styled = timetable.style.applymap(lambda v: "background-color: #fff; color: #212121;" if v else "background-color: #fff;")
-    st.dataframe(styled, height=500, width=900)
-
-# ---------- Session State ----------
 if 'teachers' not in st.session_state:
-    st.session_state.teachers = []
+    st.session_state.teachers = pd.DataFrame(columns=['TeacherID', 'Name', 'Expertise', 'MaxLoad', 'Availability'])
+
 if 'courses' not in st.session_state:
-    st.session_state.courses = []
-if 'students' not in st.session_state:
-    st.session_state.students = []
+    st.session_state.courses = pd.DataFrame(columns=['CourseID', 'Name', 'Credits', 'TheoryHours', 'PracticalHours'])
+
 if 'rooms' not in st.session_state:
-    # Added rooms state with some default rooms
-    st.session_state.rooms = [
-        {"id":"R101", "type":"Classroom", "capacity":40},
-        {"id":"R102", "type":"Lab", "capacity":30},
-        {"id":"R103", "type":"Classroom", "capacity":50},
-    ]
-if 'slots' not in st.session_state:
-    st.session_state.slots = [
-        "07:30 - 08:30", "08:30 - 09:30", "09:30 - 10:30", "10:30 - 11:30",
-        "11:30 - 12:30", "12:30 - 13:30", "13:30 - 14:30", "14:30 - 15:30", "15:30 - 16:30"
-    ]
-if 'timetable' not in st.session_state:
-    st.session_state.timetable = empty_timetable()
-if 'assignments' not in st.session_state:
-    st.session_state.assignments = []
+    st.session_state.rooms = pd.DataFrame(columns=['RoomID', 'Capacity', 'Type'])
 
-# ---------- Main UI ----------
-st.title("NEP 2020 Timetable Generator ")
+if 'students' not in st.session_state:
+    st.session_state.students = pd.DataFrame(columns=['StudentID', 'Name', 'Program', 'EnrolledCourses'])
 
-tabs = st.tabs(["Admin Panel", "User Panel"])
-with tabs[0]:
-    st.header("Admin Panel")
+if 'time_slots' not in st.session_state:
+    st.session_state.time_slots = ['Mon-9AM','Mon-11AM','Mon-2PM','Tue-9AM','Tue-11AM', 'Tue-2PM',
+                                  'Wed-9AM','Wed-11AM','Wed-2PM','Thu-9AM','Thu-11AM','Thu-2PM',
+                                  'Fri-9AM','Fri-11AM','Fri-2PM']
 
-    # ---- Teachers ----
-    st.subheader("Add Teacher")
-    teacher_id = st.text_input("Teacher ID")
-    teacher_name = st.text_input("Teacher Name")
-    if st.button("Add Teacher"):
-        if teacher_id and teacher_name:
-            if not any(t['id']==teacher_id for t in st.session_state.teachers):
-                st.session_state.teachers.append({"id": teacher_id, "name": teacher_name})
-                st.success("Teacher added!")
-            else:
-                st.warning("Teacher ID already exists.")
-        else:
-            st.warning("Please enter both ID and Name.")
-    st.write("**Teachers List:**")
-    st.write(pd.DataFrame(st.session_state.teachers))
+# ----- ADMIN PANEL FOR DATA INPUT -----
+def admin_panel():
+    st.sidebar.title("Admin Panel")
 
-    # ---- Courses ----
-    st.subheader("Add Course (with NEP credits)")
-    course_id = st.text_input("Course ID")
-    course_name = st.text_input("Course Name")
-    course_credits = st.number_input("Credits (per NEP)", min_value=1, step=1)
-    course_teacher = st.selectbox("Assign Teacher", options=[t["name"] for t in st.session_state.teachers] or [""])
-    if st.button("Add Course"):
-        if course_id and course_name and course_teacher:
-            teacher_obj = next((t for t in st.session_state.teachers if t["name"] == course_teacher), None)
-            if not any(c['id'] == course_id for c in st.session_state.courses):
-                st.session_state.courses.append({
-                    "id": course_id,
-                    "name": course_name,
-                    "credits": course_credits,
-                    "teacher_id": teacher_obj["id"] if teacher_obj else ""
-                })
-                st.success("Course added!")
-            else:
-                st.warning("Course ID already exists.")
-        else:
-            st.warning("Please enter all details.")
-    st.write("**Courses List:**")
-    st.write(pd.DataFrame(st.session_state.courses))
+    menu = st.sidebar.radio("Choose Operation:", ['Import Data', 'Add Teacher', 'Add Course', 'Add Room', 'Add Student', 'Generate Timetable'])
 
-    # ---- Rooms ----
-    st.subheader("Manage Rooms")
-    room_id = st.text_input("Room ID")
-    room_type = st.selectbox("Room Type", options=["Classroom", "Lab"])
-    room_capacity = st.number_input("Capacity", min_value=1)
-    if st.button("Add Room"):
-        if room_id and room_type and room_capacity:
-            if not any(r['id'] == room_id for r in st.session_state.rooms):
-                st.session_state.rooms.append({"id": room_id, "type": room_type, "capacity": room_capacity})
-                st.success("Room added!")
-            else:
-                st.warning("Room ID already exists.")
-        else:
-            st.warning("Please enter all details.")
-    st.write("**Rooms List:**")
-    st.write(pd.DataFrame(st.session_state.rooms))
-
-    # ---- Time slots ----
-    st.subheader("Manage Time Slots")
-    new_slot = st.text_input("Add New Time Slot (e.g., 16:30 - 17:30)")
-    if st.button("Add Slot"):
-        if new_slot:
-            if new_slot not in st.session_state.slots:
-                st.session_state.slots.append(new_slot)
-                st.success("Slot added!")
-            else:
-                st.warning("This slot already exists.")
-    st.write("Time Slots:")
-    st.write(st.session_state.slots)
-
-    # ---- Generate Timetable (Rule-based) ----
-    st.subheader("Automate Timetable Assignment with Rooms")
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-    course_color_mode = st.toggle("Color each course for visibility", value=True)
-    timetable = empty_timetable()
-    assignments = []
-
-    generate = st.button("Create Timetable Automatically (Rule Based)")
-
-    if generate:
-        course_idx = 0
-        teacher_busy = {d: {slot: [] for slot in st.session_state.slots} for d in days}
-        room_busy = {d: {slot: [] for slot in st.session_state.slots} for d in days}
-
-        for col, day in enumerate(days):
-            for row, slot in enumerate(st.session_state.slots):
-                if course_idx < len(st.session_state.courses):
-                    course = st.session_state.courses[course_idx]
-                    # Try to find a room available for this slot
-                    assigned_room = None
-                    for room in st.session_state.rooms:
-                        if room['id'] not in room_busy[day][slot]:
-                            assigned_room = room['id']
-                            break
-                    if assigned_room and course['teacher_id'] not in teacher_busy[day][slot]:
-                        cell_val = f"{course['name']} ({course['id']}) | {course['teacher_id']} | {assigned_room}"
-                        timetable.iat[row, col] = cell_val
-                        assignments.append({"course_id": course['id'], "teacher_id": course['teacher_id'],
-                                            "room_id": assigned_room, "day": day, "slot": slot})
-                        teacher_busy[day][slot].append(course['teacher_id'])
-                        room_busy[day][slot].append(assigned_room)
-                        course_idx += 1
+    if menu == 'Import Data':
+        st.subheader("Import Teachers, Courses, Rooms, Students")
+        uploaded_files = st.file_uploader("Upload CSV or Excel files (Teachers, Courses, Rooms, Students)", accept_multiple_files=True)
+        for file in uploaded_files:
+            try:
+                if file.name.endswith('.csv'):
+                    df = pd.read_csv(file)
                 else:
-                    break
-        st.session_state.timetable = timetable
-        st.session_state.assignments = assignments
-        st.success("Timetable generated with room allotment.")
-        # ---- Store to CSV for admin download ----
-        timetable_long = []
-        for d in list(timetable.columns):
-            for t in list(timetable.index):
-                val = timetable.loc[t, d]
-                if val:
-                    timetable_long.append({'Day': d, 'Time': t, 'Assignment': val})
-        timetable_long_df = pd.DataFrame(timetable_long)
-        st.write("**Download as CSV:**")
-        st.download_button("Download Timetable CSV", timetable_long_df.to_csv(index=False).encode('utf-8'), "timetable.csv")
-    elif st.session_state.timetable is not None:
-        timetable = st.session_state.timetable
+                    df = pd.read_excel(file)
+                if 'TeacherID' in df.columns:
+                    st.session_state.teachers = df
+                    st.success(f'Teachers loaded: {len(df)}')
+                elif 'CourseID' in df.columns:
+                    st.session_state.courses = df
+                    st.success(f'Courses loaded: {len(df)}')
+                elif 'RoomID' in df.columns:
+                    st.session_state.rooms = df
+                    st.success(f'Rooms loaded: {len(df)}')
+                elif 'StudentID' in df.columns:
+                    st.session_state.students = df
+                    st.success(f'Students loaded: {len(df)}')
+                else:
+                    st.warning(f'Unknown file type: {file.name}')
+            except Exception as e:
+                st.error(f'Failed to load {file.name}: {e}')
 
-    st.subheader("View Full Timetable")
-    show_timetable(timetable, course_color_mode)
+    elif menu == 'Add Teacher':
+        st.subheader("Add Teacher")
+        tid = st.text_input("Teacher ID")
+        name = st.text_input("Name")
+        expertise = st.text_input("Expertise (e.g. B.Ed, M.Ed courses)")
+        max_load = st.number_input("Maximum Load (hours)", min_value=1, max_value=40, value=20)
+        availability = st.text_input("Available Time Slots (comma-separated from predefined slots)")
+        if st.button("Add Teacher"):
+            new_teacher = {'TeacherID': tid, 'Name': name, 'Expertise': expertise,
+                           'MaxLoad': max_load, 'Availability': [a.strip() for a in availability.split(',')]}
+            st.session_state.teachers = st.session_state.teachers.append(new_teacher, ignore_index=True)
+            st.success(f"Teacher {name} added.")
 
-with tabs[1]:
-    st.header("User Panel")
+    elif menu == 'Add Course':
+        st.subheader("Add Course")
+        cid = st.text_input("Course ID")
+        cname = st.text_input("Course Name")
+        credits = st.number_input("Credits", min_value=1, max_value=6, value=3)
+        theory = st.number_input("Theory Hours", min_value=0, max_value=credits*2, value=2)
+        practical = st.number_input("Practical Hours", min_value=0, max_value=credits*2, value=1)
+        if st.button("Add Course"):
+            new_course = {'CourseID': cid, 'Name': cname, 'Credits': credits,
+                          'TheoryHours': theory, 'PracticalHours': practical}
+            st.session_state.courses = st.session_state.courses.append(new_course, ignore_index=True)
+            st.success(f"Course {cname} added.")
 
-    options = ["Student", "Teacher"]
-    role = st.radio("I am a", options)
+    elif menu == 'Add Room':
+        st.subheader("Add Room")
+        rid = st.text_input("Room ID")
+        capacity = st.number_input("Room Capacity", min_value=5, max_value=200, value=40)
+        typ = st.selectbox("Room Type", ['Classroom', 'Lab'])
+        if st.button("Add Room"):
+            new_room = {'RoomID': rid, 'Capacity': capacity, 'Type': typ}
+            st.session_state.rooms = st.session_state.rooms.append(new_room, ignore_index=True)
+            st.success(f"Room {rid} added.")
 
-    # ---- Student Section ----
-    if role == "Student":
-        st.subheader("Student View")
-        sid = st.text_input("Enter your Student ID")
-        sname = st.text_input("Enter your Name")
-        scourses = st.multiselect("Choose Your Courses", [c["name"] for c in st.session_state.courses])
-        smax_credits = st.number_input("Max Credits (NEP)", min_value=1, step=1, value=8)
-        if st.button("Register Student"):
-            selected_courselist = [c for c in st.session_state.courses if c["name"] in scourses]
-            total_credits = int(sum(float(c["credits"]) for c in selected_courselist))
-            if selected_courselist and total_credits <= smax_credits:
-                st.session_state.students.append({
-                    "id": sid,
-                    "name": sname,
-                    "courses": [c["id"] for c in selected_courselist],
-                    "max_credits": smax_credits
-                })
-                st.success(f"Student {sname} registered with total credits {total_credits:.0f}.")
-            elif total_credits > smax_credits:
-                st.warning(f"Selected courses exceed allowed credit limit ({total_credits} > {smax_credits})")
+    elif menu == 'Add Student':
+        st.subheader("Add Student")
+        sid = st.text_input("Student ID")
+        sname = st.text_input("Student Name")
+        program = st.selectbox("Program", ['B.Ed', 'M.Ed', 'FYUP', 'ITEP'])
+        enrolled_courses = st.text_area("Enrolled Course IDs (comma-separated)")
+        if st.button("Add Student"):
+            new_student = {'StudentID': sid, 'Name': sname, 'Program': program,
+                           'EnrolledCourses': [c.strip() for c in enrolled_courses.split(',')]}
+            st.session_state.students = st.session_state.students.append(new_student, ignore_index=True)
+            st.success(f"Student {sname} added.")
 
-        st.write("**Your Personalized Timetable**")
-        student = next((s for s in st.session_state.students if s["id"] == sid), None)
-        if student:
-            st.write(f"Credits allowed: {student['max_credits']}")
-            student_courses = set(student['courses'])
-            timetable = st.session_state.timetable.copy()
-            for row in timetable.index:
-                for col in timetable.columns:
-                    val = timetable.at[row, col]
-                    if val:
-                        cid = val.split("(")[-1].split(")")[0].replace(" ", "")
-                        if cid not in student_courses:
-                            timetable.at[row, col] = ""
-            show_timetable(timetable, course_color_mode)
+# ----- GENETIC ALGORITHM ENGINE (Very simplified skeleton) -----
+def fitness_function(timetable):
+    # Placeholder: Calculate fitness considering hard and soft constraints
+    # e.g. count conflicts, room capacity violations, faculty overload, gaps
+    fitness = 100  # Higher better
+    # Penalize conflicts and violations (decrease fitness)
+    return fitness
 
-    # ---- Teacher Section ----
-    if role == "Teacher":
-        st.subheader("Teacher View")
-        tid = st.text_input("Enter your Teacher ID")
-        timetable = st.session_state.timetable.copy()
-        for row in timetable.index:
-            for col in timetable.columns:
-                val = timetable.at[row, col]
-                if val:
-                    if f"| {tid} " not in val:
-                        timetable.at[row, col] = ""
-        st.write(f"Classes for Teacher ID: {tid}")
-        show_timetable(timetable, course_color_mode)
+def initial_population(pop_size, courses, timeslots, rooms, teachers):
+    population = []
+    for _ in range(pop_size):
+        timetable = []
+        # Random assignment for each course - simplistic
+        for idx, course in courses.iterrows():
+            slot = random.choice(timeslots)
+            room = random.choice(rooms['RoomID'].tolist())
+            teacher = random.choice(teachers['TeacherID'].tolist())
+            timetable.append({'CourseID': course['CourseID'], 'Time': slot, 'Room': room, 'Teacher': teacher})
+        population.append(timetable)
+    return population
+
+def crossover(parent1, parent2):
+    # One-point crossover example
+    pivot = len(parent1) // 2
+    child = parent1[:pivot] + parent2[pivot:]
+    return child
+
+def mutate(timetable, timeslots, rooms, teachers, mutation_rate=0.1):
+    for gene in timetable:
+        if random.random() < mutation_rate:
+            gene['Time'] = random.choice(timeslots)
+        if random.random() < mutation_rate:
+            gene['Room'] = random.choice(rooms['RoomID'].tolist())
+        if random.random() < mutation_rate:
+            gene['Teacher'] = random.choice(teachers['TeacherID'].tolist())
+    return timetable
+
+def genetic_algorithm(population, generations, courses, timeslots, rooms, teachers):
+    for gen in range(generations):
+        population = sorted(population, key=lambda x: fitness_function(x), reverse=True)
+        next_gen = population[:len(population)//2]  # Keep best half
+        while len(next_gen) < len(population):
+            parent1, parent2 = random.sample(next_gen, 2)
+            child = crossover(parent1, parent2)
+            child = mutate(child, timeslots, rooms, teachers)
+            next_gen.append(child)
+        population = next_gen
+        best_fit = fitness_function(population[0])
+        st.write(f"Generation {gen+1}: Best Fitness = {best_fit}")
+    return population[0]
+
+# ----- MAIN APP -----
+def main():
+    st.title("AI/ML Timetable Generator - NEP 2020")
+
+    admin_panel()
+
+    if st.sidebar.button("Generate Timetable"):
+        if st.session_state.courses.empty or st.session_state.teachers.empty or st.session_state.rooms.empty:
+            st.error("Please ensure you have added courses, teachers, and rooms.")
+            return
+        population = initial_population(20, st.session_state.courses, st.session_state.time_slots,
+                                        st.session_state.rooms, st.session_state.teachers)
+        best_timetable = genetic_algorithm(population, 30, st.session_state.courses,
+                                           st.session_state.time_slots, st.session_state.rooms,
+                                           st.session_state.teachers)
+
+        st.subheader("Generated Timetable")
+        df = pd.DataFrame(best_timetable)
+        st.dataframe(df)
+
+if __name__ == "__main__":
+    main()
