@@ -49,7 +49,7 @@ if 'assignments' not in st.session_state:
     st.session_state.assignments = []
 
 # ---------- Main UI ----------
-st.title("NEP 2020 Timetable Generator with Room Allotment")
+st.title("NEP 2020 Timetable Generator ")
 
 tabs = st.tabs(["Admin Panel", "User Panel"])
 with tabs[0]:
